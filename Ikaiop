@@ -1,0 +1,627 @@
+-- LocalScript inside StarterGui
+-- Created by: BankZa Mdz (Fully Automatic Fly Egg & Dual Speed)
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+local player = Players.LocalPlayer
+
+---------------------------------------------------------
+-- ⚙️ ตั้งค่าขนาดหน้าต่าง & ตัวแปรความเร็ว
+---------------------------------------------------------
+local UI_WIDTH = 580
+local UI_HEIGHT = 350
+
+local savedBaseCFrame = nil -- พิกัดฐานที่ปักหมุด
+local autoFarmActive = false -- สวิตช์เปิด/ปิด ออโต้
+local currentTween = nil     -- ตัวแปรคุม Tween การบิน
+
+local flySpeedToEgg = 150    -- ความเร็วบินไปหาไข่ (1-1000)
+local flySpeedToBase = 200   -- ความเร็วบินพากลับฐาน (1-1000)
+local flyHeight = 12         -- ความสูงลอยเหนือเลเซอร์/เส้นแดง
+
+-- ฟังก์ชันส่งการแจ้งเตือนมุมขวาล่าง
+local function sendNotification(title, text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = text,
+			Duration = 2.5,
+		})
+	end)
+end
+
+-- ScreenGui Setup
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BankZaMdz_AutoEggUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local colors = {
+	background = Color3.fromRGB(20, 15, 32),
+	panelBg = Color3.fromRGB(28, 20, 44),
+	stroke = Color3.fromRGB(128, 70, 200),
+	accentGreen = Color3.fromRGB(53, 150, 76),
+	greenText = Color3.fromRGB(130, 220, 150),
+	textWhite = Color3.fromRGB(240, 240, 240),
+	textSub = Color3.fromRGB(160, 150, 180),
+	buttonPurple = Color3.fromRGB(118, 50, 190),
+	buttonBlue = Color3.fromRGB(35, 75, 140),
+	toggleOff = Color3.fromRGB(45, 35, 65),
+	toggleOn = Color3.fromRGB(118, 50, 190)
+}
+
+---------------------------------------------------------
+-- MAIN WINDOW FRAME (หน้าต่างหลัก)
+---------------------------------------------------------
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, UI_WIDTH, 0, UI_HEIGHT)
+mainFrame.Position = UDim2.new(0.5, -UI_WIDTH/2, 0.5, -UI_HEIGHT/2)
+mainFrame.BackgroundColor3 = colors.background
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = colors.stroke
+mainStroke.Thickness = 1.5
+mainStroke.Parent = mainFrame
+
+-- ระบบลากย้ายหน้าต่าง
+local dragging, dragInput, dragStart, startPos
+mainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
+mainFrame.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+---------------------------------------------------------
+-- FLOATING BUTTON (ปุ่มลอย 40x40px)
+---------------------------------------------------------
+local floatBtn = Instance.new("ImageButton")
+floatBtn.Name = "BankZaMdz_FloatBtn"
+floatBtn.Size = UDim2.new(0, 40, 0, 40)
+floatBtn.Position = UDim2.new(0, 15, 0.5, -20)
+floatBtn.BackgroundColor3 = colors.panelBg
+floatBtn.ScaleType = Enum.ScaleType.Crop
+floatBtn.Parent = screenGui
+
+local ASSET_ID = "rbxassetid://1000083336" 
+floatBtn.Image = ASSET_ID
+
+local floatCorner = Instance.new("UICorner")
+floatCorner.CornerRadius = UDim.new(1, 0)
+floatCorner.Parent = floatBtn
+
+local floatStroke = Instance.new("UIStroke")
+floatStroke.Color = colors.stroke
+floatStroke.Thickness = 1.5
+floatStroke.Parent = floatBtn
+
+-- ลากปุ่มลอย & กดเปิด-ปิด
+local floatDragging, floatDragStart, floatStartPos
+local isDraggingFloat = false
+
+floatBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		floatDragging = true
+		isDraggingFloat = false
+		floatDragStart = input.Position
+		floatStartPos = floatBtn.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then floatDragging = false end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if floatDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - floatDragStart
+		if delta.Magnitude > 5 then isDraggingFloat = true end
+		floatBtn.Position = UDim2.new(floatStartPos.X.Scale, floatStartPos.X.Offset + delta.X, floatStartPos.Y.Scale, floatStartPos.Y.Offset + delta.Y)
+	end
+end)
+
+floatBtn.MouseButton1Click:Connect(function()
+	if not isDraggingFloat then
+		mainFrame.Visible = not mainFrame.Visible
+	end
+end)
+
+---------------------------------------------------------
+-- TOP TITLE BAR
+---------------------------------------------------------
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundTransparency = 1
+titleBar.Parent = mainFrame
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -120, 1, 0)
+titleText.Position = UDim2.new(0, 12, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "👑 BankZa Mdz — Fully Auto Fly Egg Farm"
+titleText.TextColor3 = colors.textWhite
+titleText.TextSize = 14
+titleText.Font = Enum.Font.SourceSansBold
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 20, 0, 20)
+closeBtn.Position = UDim2.new(1, -26, 0.5, -10)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(220, 100, 100)
+closeBtn.TextSize = 14
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.Parent = titleBar
+closeBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = false
+end)
+
+---------------------------------------------------------
+-- CONTENT LAYOUT
+---------------------------------------------------------
+local container = Instance.new("Frame")
+container.Size = UDim2.new(1, -16, 1, -44)
+container.Position = UDim2.new(0, 8, 0, 36)
+container.BackgroundTransparency = 1
+container.Parent = mainFrame
+
+-- แผงซ้าย
+local leftPanel = Instance.new("Frame")
+leftPanel.Size = UDim2.new(0, 180, 1, 0)
+leftPanel.BackgroundTransparency = 1
+leftPanel.Parent = container
+
+local profileBox = Instance.new("Frame")
+profileBox.Size = UDim2.new(1, 0, 1, 0)
+profileBox.BackgroundColor3 = colors.panelBg
+profileBox.Parent = leftPanel
+
+local profileCorner = Instance.new("UICorner")
+profileCorner.CornerRadius = UDim.new(0, 8)
+profileCorner.Parent = profileBox
+
+local profileStroke = Instance.new("UIStroke")
+profileStroke.Color = colors.stroke
+profileStroke.Thickness = 1
+profileStroke.Parent = profileBox
+
+local profileTitle = Instance.new("TextLabel")
+profileTitle.Size = UDim2.new(1, -12, 0, 20)
+profileTitle.Position = UDim2.new(0, 6, 0, 4)
+profileTitle.BackgroundTransparency = 1
+profileTitle.Text = "ข้อมูลผู้ใช้งาน"
+profileTitle.TextColor3 = colors.textSub
+profileTitle.TextSize = 11
+profileTitle.Font = Enum.Font.SourceSansBold
+profileTitle.TextXAlignment = Enum.TextXAlignment.Left
+profileTitle.Parent = profileBox
+
+local avatarImg = Instance.new("ImageLabel")
+avatarImg.Size = UDim2.new(0, 48, 0, 48)
+avatarImg.Position = UDim2.new(0.5, -24, 0, 28)
+avatarImg.BackgroundColor3 = Color3.fromRGB(15, 10, 25)
+avatarImg.Parent = profileBox
+
+local avatarCorner = Instance.new("UICorner")
+avatarCorner.CornerRadius = UDim.new(1, 0)
+avatarCorner.Parent = avatarImg
+
+task.spawn(function()
+	local content, isLoaded = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	if isLoaded then avatarImg.Image = content end
+end)
+
+local displayNameLbl = Instance.new("TextLabel")
+displayNameLbl.Size = UDim2.new(1, 0, 0, 16)
+displayNameLbl.Position = UDim2.new(0, 0, 0, 80)
+displayNameLbl.BackgroundTransparency = 1
+displayNameLbl.Text = player.DisplayName
+displayNameLbl.TextColor3 = colors.textWhite
+displayNameLbl.TextSize = 12
+displayNameLbl.Font = Enum.Font.SourceSansBold
+displayNameLbl.Parent = profileBox
+
+local infoText = Instance.new("TextLabel")
+infoText.Size = UDim2.new(1, -12, 0, 140)
+infoText.Position = UDim2.new(0, 6, 0, 105)
+infoText.BackgroundTransparency = 1
+infoText.Text = "ผู้พัฒนา: BankZa Mdz\nโหมด: ออโต้ไป-กลับเอง\nความเร็วไป: 1-1000\nความเร็วกลับ: 1-1000\nสถานะ: พร้อมใช้งาน"
+infoText.TextColor3 = colors.greenText
+infoText.TextSize = 11
+infoText.Font = Enum.Font.SourceSans
+infoText.TextXAlignment = Enum.TextXAlignment.Left
+infoText.TextYAlignment = Enum.TextYAlignment.Top
+infoText.Parent = profileBox
+
+-- แผงขวา
+local rightPanel = Instance.new("Frame")
+rightPanel.Size = UDim2.new(1, -190, 1, 0)
+rightPanel.Position = UDim2.new(0, 190, 0, 0)
+rightPanel.BackgroundTransparency = 1
+rightPanel.Parent = container
+
+local menuScroll = Instance.new("ScrollingFrame")
+menuScroll.Size = UDim2.new(1, 0, 1, 0)
+menuScroll.BackgroundTransparency = 1
+menuScroll.BorderSizePixel = 0
+menuScroll.ScrollBarThickness = 3
+menuScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+menuScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+menuScroll.Parent = rightPanel
+
+local UIList = Instance.new("UIListLayout")
+UIList.Parent = menuScroll
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
+UIList.Padding = UDim.new(0, 6)
+
+---------------------------------------------------------
+-- 🛠️ ฟังก์ชั่นช่วยสร้าง UI Element
+---------------------------------------------------------
+local function CreateButton(text, color, callback)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -6, 0, 34)
+	btn.BackgroundColor3 = color
+	btn.Text = text
+	btn.TextColor3 = colors.textWhite
+	btn.TextSize = 12
+	btn.Font = Enum.Font.SourceSansBold
+	btn.Parent = menuScroll
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 6)
+	btnCorner.Parent = btn
+
+	btn.MouseButton1Click:Connect(callback)
+end
+
+local function CreateToggle(name, defaultState, callback)
+	local toggled = defaultState or false
+
+	local btnFrame = Instance.new("Frame")
+	btnFrame.Size = UDim2.new(1, -6, 0, 38)
+	btnFrame.BackgroundColor3 = colors.panelBg
+	btnFrame.Parent = menuScroll
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 6)
+	btnCorner.Parent = btnFrame
+
+	local btnStroke = Instance.new("UIStroke")
+	btnStroke.Color = colors.stroke
+	btnStroke.Thickness = 1
+	btnStroke.Parent = btnFrame
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -50, 1, 0)
+	label.Position = UDim2.new(0, 10, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.TextColor3 = colors.textWhite
+	label.TextSize = 12
+	label.Font = Enum.Font.SourceSansBold
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = btnFrame
+
+	local switchBtn = Instance.new("TextButton")
+	switchBtn.Size = UDim2.new(0, 34, 0, 18)
+	switchBtn.Position = UDim2.new(1, -40, 0.5, -9)
+	switchBtn.BackgroundColor3 = toggled and colors.toggleOn or colors.toggleOff
+	switchBtn.Text = ""
+	switchBtn.Parent = btnFrame
+
+	local switchCorner = Instance.new("UICorner")
+	switchCorner.CornerRadius = UDim.new(1, 0)
+	switchCorner.Parent = switchBtn
+
+	local circle = Instance.new("Frame")
+	circle.Size = UDim2.new(0, 14, 0, 14)
+	circle.Position = toggled and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+	circle.BackgroundColor3 = colors.textWhite
+	circle.Parent = switchBtn
+
+	local circleCorner = Instance.new("UICorner")
+	circleCorner.CornerRadius = UDim.new(1, 0)
+	circleCorner.Parent = circle
+
+	local triggerBtn = Instance.new("TextButton")
+	triggerBtn.Size = UDim2.new(1, 0, 1, 0)
+	triggerBtn.BackgroundTransparency = 1
+	triggerBtn.Text = ""
+	triggerBtn.Parent = btnFrame
+
+	triggerBtn.MouseButton1Click:Connect(function()
+		toggled = not toggled
+		switchBtn.BackgroundColor3 = toggled and colors.toggleOn or colors.toggleOff
+		circle.Position = toggled and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+		
+		if toggled then
+			sendNotification("ระบบ", name .. " : เปิดใช้งานแล้ว")
+		else
+			sendNotification("ระบบ", name .. " : ปิดใช้งานแล้ว")
+		end
+
+		if callback then callback(toggled) end
+	end)
+end
+
+local function CreateSlider(name, minVal, maxVal, defaultVal, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, -6, 0, 45)
+	frame.BackgroundColor3 = colors.panelBg
+	frame.Parent = menuScroll
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = colors.stroke
+	stroke.Thickness = 1
+	stroke.Parent = frame
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.65, 0, 0, 20)
+	label.Position = UDim2.new(0, 10, 0, 2)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.TextColor3 = colors.textWhite
+	label.TextSize = 11
+	label.Font = Enum.Font.SourceSansBold
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = labelFrame
+
+	local valueBox = Instance.new("TextBox")
+	valueBox.Size = UDim2.new(0, 50, 0, 18)
+	valueBox.Position = UDim2.new(1, -60, 0, 3)
+	valueBox.BackgroundColor3 = Color3.fromRGB(15, 10, 25)
+	valueBox.Text = tostring(defaultVal)
+	valueBox.TextColor3 = colors.greenText
+	valueBox.TextSize = 11
+	valueBox.Font = Enum.Font.SourceSansBold
+	valueBox.Parent = frame
+
+	local valCorner = Instance.new("UICorner")
+	valCorner.CornerRadius = UDim.new(0, 4)
+	valCorner.Parent = valueBox
+
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.new(1, -20, 0, 6)
+	bar.Position = UDim2.new(0, 10, 0, 28)
+	bar.BackgroundColor3 = Color3.fromRGB(15, 10, 25)
+	bar.Parent = frame
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new((defaultVal - minVal)/(maxVal - minVal), 0, 1, 0)
+	fill.BackgroundColor3 = colors.buttonPurple
+	fill.Parent = bar
+
+	local sliderBtn = Instance.new("TextButton")
+	sliderBtn.Size = UDim2.new(1, 0, 1, 0)
+	sliderBtn.BackgroundTransparency = 1
+	sliderBtn.Text = ""
+	sliderBtn.Parent = bar
+
+	local draggingSlider = false
+	local function updateSlider(input)
+		local pos = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		local val = math.floor(minVal + (maxVal - minVal) * pos)
+		fill.Size = UDim2.new(pos, 0, 1, 0)
+		valueBox.Text = tostring(val)
+		callback(val)
+	end
+
+	sliderBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = true
+			updateSlider(input)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			updateSlider(input)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = false
+		end
+	end)
+
+	valueBox.FocusLost:Connect(function()
+		local num = tonumber(valueBox.Text) or defaultVal
+		num = math.clamp(num, minVal, maxVal)
+		fill.Size = UDim2.new((num - minVal)/(maxVal - minVal), 0, 1, 0)
+		valueBox.Text = tostring(num)
+		callback(num)
+	end)
+end
+
+---------------------------------------------------------
+-- 🛸 ระบบการบินออโต้แบบไม่ต้องกดอะไร (AUTOMATIC LOOP)
+---------------------------------------------------------
+
+-- ฟังก์ชันคุมการบินเคลื่อนที่แบบนุ่มนวล
+local function smoothFlyTo(targetPos, speed, customHeight)
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+	local hrp = char.HumanoidRootPart
+
+	if currentTween then
+		currentTween:Cancel()
+		currentTween = nil
+	end
+
+	local heightOffset = customHeight or flyHeight
+	local destination = targetPos + Vector3.new(0, heightOffset, 0)
+	local distance = (destination - hrp.Position).Magnitude
+	local currentSpeed = math.clamp(speed or 100, 1, 1000)
+	local timeToFly = distance / currentSpeed
+
+	local tweenInfo = TweenInfo.new(
+		timeToFly,
+		Enum.EasingStyle.Linear,
+		Enum.EasingDirection.Out
+	)
+
+	currentTween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(destination)})
+	currentTween:Play()
+
+	local completed = false
+	local conn
+	conn = currentTween.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then
+			completed = true
+		end
+		conn:Disconnect()
+	end)
+
+	while not completed and autoFarmActive do
+		task.wait(0.05)
+	end
+
+	return completed
+end
+
+-- ฟังก์ชันค้นหาไข่ที่ไกลที่สุด
+local function getFarthestEggPos()
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+	local hrp = char.HumanoidRootPart
+
+	local farthestEgg = nil
+	local maxDist = 0
+
+	for _, obj in pairs(workspace:GetDescendants()) do
+		if obj.Name:lower():find("egg") and (obj:IsA("BasePart") or obj:IsA("Model")) then
+			local pos = obj:IsA("BasePart") and obj.Position or obj:GetPivot().Position
+			local dist = (pos - hrp.Position).Magnitude
+			if dist > maxDist then
+				maxDist = dist
+				farthestEgg = pos
+			end
+		end
+	end
+
+	return farthestEgg
+end
+
+-- ลูปการบินออโต้ไป-กลับเอง
+local function startAutoFarmLoop()
+	task.spawn(function()
+		while autoFarmActive do
+			if not savedBaseCFrame then
+				sendNotification("แจ้งเตือน", "กรุณากด 'ปักหมุดตำแหน่งฐาน' ก่อน!")
+				autoFarmActive = false
+				break
+			end
+
+			local eggPos = getFarthestEggPos()
+			if eggPos then
+				-- 🟢 Step 1: บินไปหาไข่ที่ไกลที่สุดเองอัตโนมัติ
+				sendNotification("ออโต้ฟาร์ม", "กำลังบินไปเก็บไข่ (ความเร็ว: " .. flySpeedToEgg .. ")...")
+				local reachedEgg = smoothFlyTo(eggPos, flySpeedToEgg, flyHeight)
+
+				if reachedEgg and autoFarmActive then
+					-- โฉบลงไปแตะเก็บไข่
+					smoothFlyTo(eggPos, flySpeedToEgg, 2)
+					task.wait(0.2)
+
+					-- 🟢 Step 2: บินพาไข่กลับฐานเองอัตโนมัติ
+					sendNotification("ออโต้ฟาร์ม", "เก็บไข่แล้ว! กำลังบินกลับฐาน (ความเร็ว: " .. flySpeedToBase .. ")...")
+					smoothFlyTo(savedBaseCFrame.Position, flySpeedToBase, flyHeight)
+
+					-- วางไข่ลงฐาน
+					local char = player.Character
+					if char and char:FindFirstChild("HumanoidRootPart") then
+						char.HumanoidRootPart.CFrame = savedBaseCFrame
+					end
+
+					task.wait(0.4)
+				end
+			else
+				sendNotification("ออโต้ฟาร์ม", "ไม่พบไข่ในแมพ กำลังรอไข่เกิด...")
+				task.wait(2)
+			end
+			task.wait(0.1)
+		end
+	end)
+end
+
+---------------------------------------------------------
+-- 📌 เพิ่มปุ่มฟังก์ชันบน UI
+---------------------------------------------------------
+
+-- 1. ปักหมุดฐาน
+CreateButton("🎯 ปักหมุดตำแหน่งฐานปัจจุบัน", colors.buttonBlue, function()
+	local char = player.Character
+	if char and char:FindFirstChild("HumanoidRootPart") then
+		savedBaseCFrame = char.HumanoidRootPart.CFrame
+		sendNotification("ระบบฐาน", "ปักหมุดพิกัดฐานเรียบร้อยแล้ว!")
+	end
+end)
+
+-- 2. สวิตช์ออโต้บินไปเก็บไข่ + พากลับฐานเอง (ไม่ต้องกดอะไรเลย)
+CreateToggle("🤖 ออโต้บินไปเก็บไข่ + พากลับฐาน (อัตโนมัติ)", false, function(state)
+	autoFarmActive = state
+	if state then
+		startAutoFarmLoop()
+	else
+		if currentTween then
+			currentTween:Cancel()
+			currentTween = nil
+		end
+		sendNotification("ออโต้ฟาร์ม", "ปิดระบบออโต้ฟาร์มเรียบร้อย")
+	end
+end)
+
+-- 3. สไลเดอร์ปรับความเร็วบินไปหาไข่ (1-1000)
+CreateSlider("🚀 ความเร็วบินไปเก็บไข่ (1 - 1000)", 1, 1000, 150, function(value)
+	flySpeedToEgg = value
+end)
+
+-- 4. สไลเดอร์ปรับความเร็วบินกลับฐาน (1-1000)
+CreateSlider("🏠 ความเร็วบินพากลับฐาน (1 - 1000)", 1, 1000, 200, function(value)
+	flySpeedToBase = value
+end)
+
+-- 5. สไลเดอร์ปรับความสูงลอยเหนือเลเซอร์
+CreateSlider("📏 ความสูงบินลอยเหนือเลเซอร์ (5 - 50)", 5, 50, 12, function(value)
+	flyHeight = value
+end)
+
+-- 6. สไลเดอร์ปรับความเร็ววิ่งปกติ (1-1000)
+CreateSlider("⚡ ความเร็ววิ่งปกติ (1 - 1000)", 1, 1000, 16, function(value)
+	local char = player.Character
+	if char and char:FindFirstChildOfClass("Humanoid") then
+		char:FindFirstChildOfClass("Humanoid").WalkSpeed = value
+	end
+end)
+
+sendNotification("BankZa Mdz", "อัปเดต
